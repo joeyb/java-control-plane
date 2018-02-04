@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.fail;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import envoy.api.v2.Base.Node;
 import envoy.api.v2.Cds.Cluster;
 import envoy.api.v2.Eds.ClusterLoadAssignment;
 import envoy.api.v2.Lds.Listener;
 import envoy.api.v2.Rds.RouteConfiguration;
+import envoy.api.v2.core.Base.Node;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;

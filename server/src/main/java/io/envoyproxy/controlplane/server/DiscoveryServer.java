@@ -3,13 +3,13 @@ package io.envoyproxy.controlplane.server;
 import static com.google.common.base.Strings.isNullOrEmpty;
 
 import com.google.protobuf.Any;
-import envoy.api.v2.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceImplBase;
 import envoy.api.v2.ClusterDiscoveryServiceGrpc.ClusterDiscoveryServiceImplBase;
 import envoy.api.v2.Discovery.DiscoveryRequest;
 import envoy.api.v2.Discovery.DiscoveryResponse;
 import envoy.api.v2.EndpointDiscoveryServiceGrpc.EndpointDiscoveryServiceImplBase;
 import envoy.api.v2.ListenerDiscoveryServiceGrpc.ListenerDiscoveryServiceImplBase;
 import envoy.api.v2.RouteDiscoveryServiceGrpc.RouteDiscoveryServiceImplBase;
+import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceImplBase;
 import io.envoyproxy.controlplane.cache.ConfigWatcher;
 import io.envoyproxy.controlplane.cache.Response;
 import io.envoyproxy.controlplane.cache.ResponseType;

@@ -36,8 +36,8 @@ rm -rf "${protodir}"
 
 curl -sL https://github.com/envoyproxy/data-plane-api/archive/${data_plane_api_commit}.tar.gz | tar xz --include="*.proto"
 # TODO: Create VERSION file with the data plane api commit
-mkdir -p "${protodir}/api"
-cp -r data-plane-api-*/api/* "${protodir}/api"
+mkdir -p "${protodir}/envoy"
+cp -r data-plane-api-*/envoy/* "${protodir}/envoy"
 
 curl -sL https://github.com/gogo/protobuf/archive/${gogoproto_commit}.tar.gz | tar xz --include="*.proto"
 # TODO: Create VERSION file with the gogoproto commit

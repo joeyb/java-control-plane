@@ -1,6 +1,6 @@
 package io.envoyproxy.controlplane.cache;
 
-import envoy.api.v2.Base.Node;
+import envoy.api.v2.core.Base.Node;
 import java.util.Collection;
 import javax.annotation.concurrent.ThreadSafe;
 

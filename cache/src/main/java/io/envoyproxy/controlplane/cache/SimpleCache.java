@@ -2,7 +2,7 @@ package io.envoyproxy.controlplane.cache;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.Message;
-import envoy.api.v2.Base.Node;
+import envoy.api.v2.core.Base.Node;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
