@@ -20,7 +20,7 @@ jobs:
           # fallback to using the latest cache if no exact match is found
           - v1-dependencies-
 
-      - run: mvn install -DskipTests dependency:go-offline
+      - run: mvn -B install -DskipTests dependency:go-offline
 
       - save_cache:
           paths:
@@ -28,4 +28,4 @@ jobs:
           key: v1-dependencies-{{ checksum "pom.xml" }}-{{ checksum "cache/pom.xml" }}-{{ checksum "server/pom.xml" }}
 
       # run tests!
-      - run: mvn verify
+      - run: mvn -B verify
