@@ -17,17 +17,20 @@ import envoy.api.v2.core.Base.Node;
 import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc;
 import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceStub;
 import io.envoyproxy.controlplane.cache.ConfigWatcher;
+import io.envoyproxy.controlplane.cache.ResourceType;
 import io.envoyproxy.controlplane.cache.Response;
-import io.envoyproxy.controlplane.cache.ResponseType;
 import io.envoyproxy.controlplane.cache.Watch;
 import io.grpc.stub.StreamObserver;
 import io.grpc.testing.GrpcServerRule;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.assertj.core.api.Condition;
 import org.junit.Rule;
 import org.junit.Test;
 import reactor.core.publisher.EmitterProcessor;
@@ -45,6 +48,8 @@ public class DiscoveryServerTest {
       .setId("test-id")
       .setCluster("test-cluster")
       .build();
+
+  private static final String VERSION = Integer.toString(ThreadLocalRandom.current().nextInt(1, 1000));
 
   private static final Cluster CLUSTER = Resources.createCluster(true, CLUSTER_NAME);
   private static final ClusterLoadAssignment ENDPOINT = Resources.createEndpoint(CLUSTER_NAME, ENDPOINT_PORT);
@@ -64,12 +69,13 @@ public class DiscoveryServerTest {
     AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
     CountDownLatch completedLatch = new CountDownLatch(1);
     AtomicBoolean error = new AtomicBoolean();
+    Collection<DiscoveryResponse> responses = new LinkedList<>();
 
     StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(
         new StreamObserver<DiscoveryResponse>() {
           @Override
           public void onNext(DiscoveryResponse value) {
-
+            responses.add(value);
           }
 
           @Override
@@ -85,23 +91,23 @@ public class DiscoveryServerTest {
 
     requestObserver.onNext(DiscoveryRequest.newBuilder()
         .setNode(NODE)
-        .setTypeUrl(DiscoveryServer.LISTENER_TYPE)
+        .setTypeUrl(ResourceType.LISTENER.typeUrl())
         .build());
 
     requestObserver.onNext(DiscoveryRequest.newBuilder()
         .setNode(NODE)
-        .setTypeUrl(DiscoveryServer.CLUSTER_TYPE)
+        .setTypeUrl(ResourceType.CLUSTER.typeUrl())
         .build());
 
     requestObserver.onNext(DiscoveryRequest.newBuilder()
         .setNode(NODE)
-        .setTypeUrl(DiscoveryServer.ENDPOINT_TYPE)
+        .setTypeUrl(ResourceType.ENDPOINT.typeUrl())
         .addResourceNames(CLUSTER_NAME)
         .build());
 
     requestObserver.onNext(DiscoveryRequest.newBuilder()
         .setNode(NODE)
-        .setTypeUrl(DiscoveryServer.ROUTE_TYPE)
+        .setTypeUrl(ResourceType.ROUTE.typeUrl())
         .addResourceNames(ROUTE_NAME)
         .build());
 
@@ -111,38 +117,42 @@ public class DiscoveryServerTest {
       fail(String.format("failed to complete request before timeout, error = %b", error.get()));
     }
 
-    for (ResponseType type : ResponseType.values()) {
+    for (ResourceType type : ResourceType.values()) {
       assertThat(configWatcher.counts).containsEntry(type, 1);
     }
 
-    assertThat(configWatcher.counts).hasSize(ResponseType.values().length);
+    assertThat(configWatcher.counts).hasSize(ResourceType.values().length);
+
+    for (ResourceType type : ResourceType.values()) {
+      assertThat(responses).haveAtLeastOne(new Condition<>(
+          r -> r.getTypeUrl().equals(type.typeUrl()) && r.getVersionInfo().equals(VERSION),
+          "missing expected response of type %s", type));
+    }
   }
 
-  private static Multimap<ResponseType, Response> createResponses() {
-    final String version = "1";
-
-    return ImmutableMultimap.<ResponseType, Response>builder()
-        .put(ResponseType.CLUSTER_RESPONSE, Response.create(false, ImmutableList.of(CLUSTER), version))
-        .put(ResponseType.ENDPOINT_RESPONSE, Response.create(false, ImmutableList.of(ENDPOINT), version))
-        .put(ResponseType.LISTENER_RESPONSE, Response.create(false, ImmutableList.of(LISTENER), version))
-        .put(ResponseType.ROUTE_RESPONSE, Response.create(false, ImmutableList.of(ROUTE), version))
+  private static Multimap<ResourceType, Response> createResponses() {
+    return ImmutableMultimap.<ResourceType, Response>builder()
+        .put(ResourceType.CLUSTER, Response.create(false, ImmutableList.of(CLUSTER), VERSION))
+        .put(ResourceType.ENDPOINT, Response.create(false, ImmutableList.of(ENDPOINT), VERSION))
+        .put(ResourceType.LISTENER, Response.create(false, ImmutableList.of(LISTENER), VERSION))
+        .put(ResourceType.ROUTE, Response.create(false, ImmutableList.of(ROUTE), VERSION))
         .build();
   }
 
   private static class MockConfigWatcher implements ConfigWatcher {
 
     private final boolean closeWatch;
-    private final Map<ResponseType, Integer> counts;
-    private final LinkedListMultimap<ResponseType, Response> responses;
+    private final Map<ResourceType, Integer> counts;
+    private final LinkedListMultimap<ResourceType, Response> responses;
 
-    MockConfigWatcher(boolean closeWatch, Multimap<ResponseType, Response> responses) {
+    MockConfigWatcher(boolean closeWatch, Multimap<ResourceType, Response> responses) {
       this.closeWatch = closeWatch;
       this.counts = new HashMap<>();
       this.responses = LinkedListMultimap.create(responses);
     }
 
     @Override
-    public Watch watch(ResponseType type, Node node, String version, Collection<String> names) {
+    public Watch watch(ResourceType type, Node node, String version, Collection<String> names) {
       counts.put(type, counts.getOrDefault(type, 0) + 1);
 
       Watch watch = new Watch(names, type);

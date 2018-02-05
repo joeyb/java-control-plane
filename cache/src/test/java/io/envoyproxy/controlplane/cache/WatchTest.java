@@ -12,7 +12,7 @@ public class WatchTest {
   public void stopIsCalledOnCancel() {
     AtomicInteger count = new AtomicInteger();
 
-    Watch watch = new Watch(ImmutableList.of(), ResponseType.LISTENER_RESPONSE);
+    Watch watch = new Watch(ImmutableList.of(), ResourceType.LISTENER);
 
     watch.setStop(count::getAndIncrement);
 

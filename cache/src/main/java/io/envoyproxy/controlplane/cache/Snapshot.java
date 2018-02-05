@@ -23,7 +23,7 @@ public abstract class Snapshot {
    * @param resources multi-map of resources in this snapshot, keyed on their type
    * @param version cache-tracked version of this snapshot
    */
-  public static Snapshot create(Multimap<ResponseType, Message> resources, String version) {
+  public static Snapshot create(Multimap<ResourceType, Message> resources, String version) {
     return new AutoValue_Snapshot(resources, version);
   }
 
@@ -44,11 +44,11 @@ public abstract class Snapshot {
       String version) {
 
     return create(
-        ImmutableMultimap.<ResponseType, Message>builder()
-            .putAll(ResponseType.CLUSTER_RESPONSE, clusters)
-            .putAll(ResponseType.ENDPOINT_RESPONSE, endpoints)
-            .putAll(ResponseType.LISTENER_RESPONSE, listeners)
-            .putAll(ResponseType.ROUTE_RESPONSE, routes)
+        ImmutableMultimap.<ResourceType, Message>builder()
+            .putAll(ResourceType.CLUSTER, clusters)
+            .putAll(ResourceType.ENDPOINT, endpoints)
+            .putAll(ResourceType.LISTENER, listeners)
+            .putAll(ResourceType.ROUTE, routes)
             .build(),
         version);
   }
@@ -56,7 +56,7 @@ public abstract class Snapshot {
   /**
    * Returns the {@link Multimap} of resources in the snapshot, keyed on the resource type.
    */
-  public abstract Multimap<ResponseType, Message> resources();
+  public abstract Multimap<ResourceType, Message> resources();
 
   /**
    * Returns the snapshot's version.

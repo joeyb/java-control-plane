@@ -35,11 +35,11 @@ public class SimpleCacheTest {
       ImmutableList.of(Listener.newBuilder().setName(LISTENER_NAME).build()),
       ImmutableList.of(RouteConfiguration.newBuilder().setName(ROUTE_NAME).build()),
       VERSION);
-  private static final Map<ResponseType, Collection<String>> NAMES = ImmutableMap.of(
-      ResponseType.CLUSTER_RESPONSE, ImmutableList.of(CLUSTER_NAME),
-      ResponseType.ENDPOINT_RESPONSE, ImmutableList.of(),
-      ResponseType.LISTENER_RESPONSE, ImmutableList.of(LISTENER_NAME),
-      ResponseType.ROUTE_RESPONSE, ImmutableList.of(ROUTE_NAME));
+  private static final Map<ResourceType, Collection<String>> NAMES = ImmutableMap.of(
+      ResourceType.CLUSTER, ImmutableList.of(CLUSTER_NAME),
+      ResourceType.ENDPOINT, ImmutableList.of(),
+      ResourceType.LISTENER, ImmutableList.of(LISTENER_NAME),
+      ResourceType.ROUTE, ImmutableList.of(ROUTE_NAME));
 
 
   @Test
@@ -49,7 +49,7 @@ public class SimpleCacheTest {
     cache.setSnapshot(SingleNodeGroup.GROUP, SNAPSHOT);
 
     Watch watch = cache.watch(
-        ResponseType.ENDPOINT_RESPONSE,
+        ResourceType.ENDPOINT,
         Node.getDefaultInstance(),
         "",
         ImmutableList.of("none"));
@@ -63,18 +63,18 @@ public class SimpleCacheTest {
 
     cache.setSnapshot(SingleNodeGroup.GROUP, SNAPSHOT);
 
-    Watch watch = cache.watch(ResponseType.LISTENER_RESPONSE, null, "", ImmutableList.of());
+    Watch watch = cache.watch(ResourceType.LISTENER, null, "", ImmutableList.of());
 
     assertThat(watch.valueEmitter().getPending()).isZero();
   }
 
   @Test
-  public void successfullyWatchAllResponseTypesWithSetBeforeWatch() {
+  public void successfullyWatchAllResourceTypesWithSetBeforeWatch() {
     SimpleCache cache = new SimpleCache(null, new SingleNodeGroup());
 
     cache.setSnapshot(SingleNodeGroup.GROUP, SNAPSHOT);
 
-    for (ResponseType type : ResponseType.values()) {
+    for (ResourceType type : ResourceType.values()) {
       Watch watch = cache.watch(type, Node.getDefaultInstance(), "", NAMES.get(type));
 
       assertThat(watch.type()).isEqualByComparingTo(type);
@@ -89,17 +89,17 @@ public class SimpleCacheTest {
   }
 
   @Test
-  public void successfullyWatchAllResponseTypesWithSetAfterWatch() {
+  public void successfullyWatchAllResourceTypesWithSetAfterWatch() {
     SimpleCache cache = new SimpleCache(null, new SingleNodeGroup());
 
-    Map<ResponseType, Watch> watches = Arrays.stream(ResponseType.values())
+    Map<ResourceType, Watch> watches = Arrays.stream(ResourceType.values())
         .collect(Collectors.toMap(
             type -> type,
             type -> cache.watch(type, Node.getDefaultInstance(), "", NAMES.get(type))));
 
     cache.setSnapshot(SingleNodeGroup.GROUP, SNAPSHOT);
 
-    for (ResponseType type : ResponseType.values()) {
+    for (ResourceType type : ResourceType.values()) {
       Response response = Mono.from(watches.get(type).value()).block(Duration.ofMillis(250));
 
       assertThat(response).isNotNull();
@@ -112,7 +112,7 @@ public class SimpleCacheTest {
   public void watchesAreReleasedAfterCancel() {
     SimpleCache cache = new SimpleCache(null, new SingleNodeGroup());
 
-    Map<ResponseType, Watch> watches = Arrays.stream(ResponseType.values())
+    Map<ResourceType, Watch> watches = Arrays.stream(ResourceType.values())
         .collect(Collectors.toMap(
             type -> type,
             type -> cache.watch(type, Node.getDefaultInstance(), "", NAMES.get(type))));
@@ -138,7 +138,7 @@ public class SimpleCacheTest {
         },
         new SingleNodeGroup());
 
-    cache.watch(ResponseType.LISTENER_RESPONSE, Node.getDefaultInstance(), "", ImmutableList.of());
+    cache.watch(ResourceType.LISTENER, Node.getDefaultInstance(), "", ImmutableList.of());
 
     if (!latch.await(250, TimeUnit.MILLISECONDS)) {
       fail("timed out waiting for callback");

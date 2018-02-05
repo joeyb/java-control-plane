@@ -6,18 +6,9 @@ import envoy.api.v2.Eds.ClusterLoadAssignment;
 import envoy.api.v2.Lds.Listener;
 import envoy.api.v2.Rds.RouteConfiguration;
 
-/**
- * {@code ResponseType} enumerates the different discovery response types.
- */
-public enum ResponseType {
+public class Resources {
 
-  CLUSTER_RESPONSE,
-
-  ENDPOINT_RESPONSE,
-
-  LISTENER_RESPONSE,
-
-  ROUTE_RESPONSE;
+  static final String TYPE_URL_PREFIX = "type.googleapis.com/envoy.api.v2.";
 
   /**
    * Returns the name of the given resource message.
@@ -43,4 +34,6 @@ public enum ResponseType {
 
     return "";
   }
+
+  private Resources() { }
 }

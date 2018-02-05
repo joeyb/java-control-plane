@@ -13,12 +13,12 @@ public class Watch {
 
   private final AtomicBoolean isCancelled = new AtomicBoolean();
   private final Collection<String> names;
-  private final ResponseType type;
+  private final ResourceType type;
   private final EmitterProcessor<Response> value = EmitterProcessor.create();
 
   private Runnable stop;
 
-  public Watch(Collection<String> names, ResponseType type) {
+  public Watch(Collection<String> names, ResourceType type) {
     this.names = names;
     this.type = type;
   }
@@ -43,9 +43,9 @@ public class Watch {
   }
 
   /**
-   * Returns the response type that is being watched.
+   * Returns the resource type that is being watched.
    */
-  public ResponseType type() {
+  public ResourceType type() {
     return type;
   }
 

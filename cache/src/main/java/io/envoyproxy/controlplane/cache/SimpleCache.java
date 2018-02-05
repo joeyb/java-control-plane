@@ -66,7 +66,7 @@ public class SimpleCache implements Cache {
    * {@inheritDoc}
    */
   @Override
-  public Watch watch(ResponseType type, Node node, String version, Collection<String> names) {
+  public Watch watch(ResourceType type, Node node, String version, Collection<String> names) {
     Watch watch = new Watch(names, type);
 
     final String group;
@@ -135,7 +135,7 @@ public class SimpleCache implements Cache {
       Map<String, Boolean> names = watch.names().stream().collect(Collectors.toMap(name -> name, name -> true));
 
       Optional<String> missingResourceName = resources.stream()
-          .map(ResponseType::getResourceName)
+          .map(Resources::getResourceName)
           .filter(n -> !names.containsKey(n))
           .findFirst();
 

@@ -1,6 +1,9 @@
 package io.envoyproxy.controlplane.server;
 
 import static com.google.common.base.Strings.isNullOrEmpty;
+import static io.envoyproxy.controlplane.cache.ResourceType.CLUSTER;
+import static io.envoyproxy.controlplane.cache.ResourceType.ENDPOINT;
+import static io.envoyproxy.controlplane.cache.ResourceType.LISTENER;
 
 import com.google.protobuf.Any;
 import envoy.api.v2.ClusterDiscoveryServiceGrpc.ClusterDiscoveryServiceImplBase;
@@ -11,15 +14,14 @@ import envoy.api.v2.ListenerDiscoveryServiceGrpc.ListenerDiscoveryServiceImplBas
 import envoy.api.v2.RouteDiscoveryServiceGrpc.RouteDiscoveryServiceImplBase;
 import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceImplBase;
 import io.envoyproxy.controlplane.cache.ConfigWatcher;
+import io.envoyproxy.controlplane.cache.ResourceType;
 import io.envoyproxy.controlplane.cache.Response;
-import io.envoyproxy.controlplane.cache.ResponseType;
 import io.envoyproxy.controlplane.cache.Watch;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,16 +29,9 @@ import reactor.core.publisher.Flux;
 
 public class DiscoveryServer {
 
+  private static final String ANY_TYPE_URL = "";
+
   private static final Logger LOGGER = LoggerFactory.getLogger(DiscoveryServer.class);
-
-  private static final String TYPE_PREFIX = "type.googleapis.com/envoy.api.v2.";
-
-  private static final String ANY_TYPE = "";
-
-  static final String CLUSTER_TYPE  = TYPE_PREFIX + "Cluster";
-  static final String ENDPOINT_TYPE = TYPE_PREFIX + "ClusterLoadAssignment";
-  static final String LISTENER_TYPE = TYPE_PREFIX + "Listener";
-  static final String ROUTE_TYPE    = TYPE_PREFIX + "RouteConfiguration";
 
   private final ConfigWatcher configWatcher;
   private final AtomicLong streamCount = new AtomicLong();
@@ -54,7 +49,7 @@ public class DiscoveryServer {
       public StreamObserver<DiscoveryRequest> streamAggregatedResources(
           StreamObserver<DiscoveryResponse> responseObserver) {
 
-        return createRequestHandler(responseObserver, ANY_TYPE);
+        return createRequestHandler(responseObserver, ANY_TYPE_URL);
       }
     };
   }
@@ -68,7 +63,7 @@ public class DiscoveryServer {
       public StreamObserver<DiscoveryRequest> streamClusters(
           StreamObserver<DiscoveryResponse> responseObserver) {
 
-        return createRequestHandler(responseObserver, CLUSTER_TYPE);
+        return createRequestHandler(responseObserver, CLUSTER.typeUrl());
       }
     };
   }
@@ -82,7 +77,7 @@ public class DiscoveryServer {
       public StreamObserver<DiscoveryRequest> streamEndpoints(
           StreamObserver<DiscoveryResponse> responseObserver) {
 
-        return createRequestHandler(responseObserver, ENDPOINT_TYPE);
+        return createRequestHandler(responseObserver, ENDPOINT.typeUrl());
       }
     };
   }
@@ -96,7 +91,7 @@ public class DiscoveryServer {
       public StreamObserver<DiscoveryRequest> streamListeners(
           StreamObserver<DiscoveryResponse> responseObserver) {
 
-        return createRequestHandler(responseObserver, LISTENER_TYPE);
+        return createRequestHandler(responseObserver, LISTENER.typeUrl());
       }
     };
   }
@@ -110,7 +105,7 @@ public class DiscoveryServer {
       public StreamObserver<DiscoveryRequest> streamRoutes(
           StreamObserver<DiscoveryResponse> responseObserver) {
 
-        return createRequestHandler(responseObserver, ROUTE_TYPE);
+        return createRequestHandler(responseObserver, ResourceType.ROUTE.typeUrl());
       }
     };
   }
@@ -125,15 +120,8 @@ public class DiscoveryServer {
 
     return new StreamObserver<DiscoveryRequest>() {
 
-      private Watch clusters = null;
-      private Watch endpoints = null;
-      private Watch listeners = null;
-      private Watch routes = null;
-
-      private AtomicReference<String> clusterNonce = new AtomicReference<>();
-      private AtomicReference<String> endpointNonce = new AtomicReference<>();
-      private AtomicReference<String> listenerNonce = new AtomicReference<>();
-      private AtomicReference<String> routeNonce = new AtomicReference<>();
+      private final Map<ResourceType, Watch> watches = new ConcurrentHashMap<>(ResourceType.values().length);
+      private final Map<ResourceType, String> nonces = new ConcurrentHashMap<>(ResourceType.values().length);
 
       private AtomicLong streamNonce = new AtomicLong();
 
@@ -142,7 +130,7 @@ public class DiscoveryServer {
         String nonce = request.getResponseNonce();
         String typeUrl = request.getTypeUrl();
 
-        if (defaultTypeUrl.equals(ANY_TYPE)) {
+        if (defaultTypeUrl.equals(ANY_TYPE_URL)) {
           if (typeUrl.isEmpty()) {
             responseObserver.onError(
                 Status.UNKNOWN.withDescription("type URL is required for ADS").asRuntimeException());
@@ -158,60 +146,28 @@ public class DiscoveryServer {
             nonce,
             request.getVersionInfo());
 
-        if (typeUrl.equals(CLUSTER_TYPE) && test(clusterNonce, n -> isNullOrEmpty(n) || n.equals(nonce))) {
-          if (clusters != null) {
-            clusters.cancel();
+        for (ResourceType type : ResourceType.values()) {
+          String resourceNonce = nonces.get(type);
+
+          if (typeUrl.equals(type.typeUrl()) && (isNullOrEmpty(resourceNonce) || resourceNonce.equals(nonce))) {
+            watches.compute(type, (t, oldWatch) -> {
+              if (oldWatch != null) {
+                oldWatch.cancel();
+              }
+
+              Watch newWatch = configWatcher.watch(
+                  type,
+                  request.getNode(),
+                  request.getVersionInfo(),
+                  request.getResourceNamesList());
+
+              Flux.from(newWatch.value()).subscribe(r -> nonces.put(type, send(r, type.typeUrl())));
+
+              return newWatch;
+            });
+
+            return;
           }
-
-          clusters = configWatcher.watch(
-              ResponseType.CLUSTER_RESPONSE,
-              request.getNode(),
-              request.getVersionInfo(),
-              request.getResourceNamesList());
-
-          Flux.from(clusters.value()).subscribe(r -> clusterNonce.set(send(r, CLUSTER_TYPE)));
-        }
-
-        if (typeUrl.equals(ENDPOINT_TYPE) && test(endpointNonce, n -> isNullOrEmpty(n) || n.equals(nonce))) {
-          if (endpoints != null) {
-            endpoints.cancel();
-          }
-
-          endpoints = configWatcher.watch(
-              ResponseType.ENDPOINT_RESPONSE,
-              request.getNode(),
-              request.getVersionInfo(),
-              request.getResourceNamesList());
-
-          Flux.from(endpoints.value()).subscribe(r -> endpointNonce.set(send(r, ENDPOINT_TYPE)));
-        }
-
-        if (typeUrl.equals(LISTENER_TYPE) && test(listenerNonce, n -> isNullOrEmpty(n) || n.equals(nonce))) {
-          if (listeners != null) {
-            listeners.cancel();
-          }
-
-          listeners = configWatcher.watch(
-              ResponseType.LISTENER_RESPONSE,
-              request.getNode(),
-              request.getVersionInfo(),
-              request.getResourceNamesList());
-
-          Flux.from(listeners.value()).subscribe(r -> listenerNonce.set(send(r, LISTENER_TYPE)));
-        }
-
-        if (typeUrl.equals(ROUTE_TYPE) && test(routeNonce, n -> isNullOrEmpty(n) || n.equals(nonce))) {
-          if (routes != null) {
-            routes.cancel();
-          }
-
-          routes = configWatcher.watch(
-              ResponseType.ROUTE_RESPONSE,
-              request.getNode(),
-              request.getVersionInfo(),
-              request.getResourceNamesList());
-
-          Flux.from(routes.value()).subscribe(r -> routeNonce.set(send(r, ROUTE_TYPE)));
         }
       }
 
@@ -230,10 +186,7 @@ public class DiscoveryServer {
       }
 
       private void cancel() {
-        execIfNotNull(clusters, Watch::cancel);
-        execIfNotNull(endpoints, Watch::cancel);
-        execIfNotNull(listeners, Watch::cancel);
-        execIfNotNull(routes, Watch::cancel);
+        watches.values().forEach(Watch::cancel);
       }
 
       private String send(Response response, String typeUrl) {
@@ -254,15 +207,5 @@ public class DiscoveryServer {
         return nonce;
       }
     };
-  }
-
-  private static <T> void execIfNotNull(T value, Consumer<T> consumer) {
-    if (value != null) {
-      consumer.accept(value);
-    }
-  }
-
-  private static <T> boolean test(AtomicReference<T> reference, Predicate<T> predicate) {
-    return predicate.test(reference.get());
   }
 }

@@ -21,5 +21,5 @@ public interface ConfigWatcher {
    * @param version the last applied snapshot version
    * @param names requested resource names
    */
-  Watch watch(ResponseType type, Node node, String version, Collection<String> names);
+  Watch watch(ResourceType type, Node node, String version, Collection<String> names);
 }
