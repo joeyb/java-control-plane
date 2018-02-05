@@ -32,10 +32,11 @@ public class DiscoveryServer {
   private static final String TYPE_PREFIX = "type.googleapis.com/envoy.api.v2.";
 
   private static final String ANY_TYPE = "";
-  private static final String CLUSTER_TYPE = TYPE_PREFIX + "Cluster";
-  private static final String ENDPOINT_TYPE = TYPE_PREFIX + "ClusterLoadAssignment";
-  private static final String LISTENER_TYPE = TYPE_PREFIX + "Listener";
-  private static final String ROUTE_TYPE = TYPE_PREFIX + "RouteConfiguration";
+
+  static final String CLUSTER_TYPE  = TYPE_PREFIX + "Cluster";
+  static final String ENDPOINT_TYPE = TYPE_PREFIX + "ClusterLoadAssignment";
+  static final String LISTENER_TYPE = TYPE_PREFIX + "Listener";
+  static final String ROUTE_TYPE    = TYPE_PREFIX + "RouteConfiguration";
 
   private final ConfigWatcher configWatcher;
   private final AtomicLong streamCount = new AtomicLong();
@@ -217,12 +218,14 @@ public class DiscoveryServer {
       @Override
       public void onError(Throwable t) {
         LOGGER.error("[{}] stream closed with error", streamId, t);
+        responseObserver.onError(Status.fromThrowable(t).asException());
         cancel();
       }
 
       @Override
       public void onCompleted() {
         LOGGER.info("[{}] stream closed", streamId);
+        responseObserver.onCompleted();
         cancel();
       }
 

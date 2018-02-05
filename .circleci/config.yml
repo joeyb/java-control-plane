@@ -29,3 +29,5 @@ jobs:
 
       # run tests!
       - run: mvn -B verify
+
+      - run: bash <(curl -s https://codecov.io/bash)

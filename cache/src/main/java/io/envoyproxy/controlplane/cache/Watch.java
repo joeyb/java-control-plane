@@ -18,7 +18,7 @@ public class Watch {
 
   private Runnable stop;
 
-  Watch(Collection<String> names, ResponseType type) {
+  public Watch(Collection<String> names, ResponseType type) {
     this.names = names;
     this.type = type;
   }
