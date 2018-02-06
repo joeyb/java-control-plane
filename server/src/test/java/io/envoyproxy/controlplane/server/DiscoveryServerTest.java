@@ -8,11 +8,19 @@ import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Multimap;
 import envoy.api.v2.Cds.Cluster;
+import envoy.api.v2.ClusterDiscoveryServiceGrpc;
+import envoy.api.v2.ClusterDiscoveryServiceGrpc.ClusterDiscoveryServiceStub;
 import envoy.api.v2.Discovery.DiscoveryRequest;
 import envoy.api.v2.Discovery.DiscoveryResponse;
 import envoy.api.v2.Eds.ClusterLoadAssignment;
+import envoy.api.v2.EndpointDiscoveryServiceGrpc;
+import envoy.api.v2.EndpointDiscoveryServiceGrpc.EndpointDiscoveryServiceStub;
 import envoy.api.v2.Lds.Listener;
+import envoy.api.v2.ListenerDiscoveryServiceGrpc;
+import envoy.api.v2.ListenerDiscoveryServiceGrpc.ListenerDiscoveryServiceStub;
 import envoy.api.v2.Rds.RouteConfiguration;
+import envoy.api.v2.RouteDiscoveryServiceGrpc;
+import envoy.api.v2.RouteDiscoveryServiceGrpc.RouteDiscoveryServiceStub;
 import envoy.api.v2.core.Base.Node;
 import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc;
 import envoy.service.discovery.v2.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceStub;
@@ -128,6 +136,83 @@ public class DiscoveryServerTest {
           r -> r.getTypeUrl().equals(type.typeUrl()) && r.getVersionInfo().equals(VERSION),
           "missing expected response of type %s", type));
     }
+  }
+
+  @Test
+  public void testSeparateHandlers() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getClusterDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getEndpointDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getListenerDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getRouteDiscoveryServiceImpl());
+
+    ClusterDiscoveryServiceStub  clusterStub  = ClusterDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    EndpointDiscoveryServiceStub endpointStub = EndpointDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    ListenerDiscoveryServiceStub listenerStub = ListenerDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    RouteDiscoveryServiceStub    routeStub    = RouteDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    for (ResourceType type : ResourceType.values()) {
+      CountDownLatch completedLatch = new CountDownLatch(1);
+      AtomicBoolean error = new AtomicBoolean();
+      Collection<DiscoveryResponse> responses = new LinkedList<>();
+
+      StreamObserver<DiscoveryResponse> responseObserver = new StreamObserver<DiscoveryResponse>() {
+        @Override
+        public void onNext(DiscoveryResponse value) {
+          responses.add(value);
+        }
+
+        @Override
+        public void onError(Throwable t) {
+          error.set(true);
+        }
+
+        @Override
+        public void onCompleted() {
+          completedLatch.countDown();
+        }
+      };
+
+      StreamObserver<DiscoveryRequest> requestObserver = null;
+      DiscoveryRequest.Builder discoveryRequestBuilder = DiscoveryRequest.newBuilder()
+          .setNode(NODE)
+          .setTypeUrl(type.typeUrl());
+
+      switch (type) {
+        case CLUSTER:
+          requestObserver = clusterStub.streamClusters(responseObserver);
+          break;
+        case ENDPOINT:
+          requestObserver = endpointStub.streamEndpoints(responseObserver);
+          discoveryRequestBuilder.addResourceNames(CLUSTER_NAME);
+          break;
+        case LISTENER:
+          requestObserver = listenerStub.streamListeners(responseObserver);
+          break;
+        case ROUTE:
+          requestObserver = routeStub.streamRoutes(responseObserver);
+          discoveryRequestBuilder.addResourceNames(ROUTE_NAME);
+          break;
+        default:
+          fail("Unsupported resource type: " + type.toString());
+      }
+
+      requestObserver.onNext(discoveryRequestBuilder.build());
+      requestObserver.onCompleted();
+
+      if (!completedLatch.await(1, TimeUnit.SECONDS) || error.get()) {
+        fail(String.format("failed to complete request before timeout, error = %b", error.get()));
+      }
+
+      assertThat(configWatcher.counts).containsEntry(type, 1);
+      assertThat(responses).haveAtLeastOne(new Condition<>(
+          r -> r.getTypeUrl().equals(type.typeUrl()) && r.getVersionInfo().equals(VERSION),
+          "missing expected response of type %s", type));
+    }
+
+    assertThat(configWatcher.counts).hasSize(ResourceType.values().length);
   }
 
   private static Multimap<ResourceType, Response> createResponses() {
