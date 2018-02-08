@@ -161,7 +161,12 @@ public class DiscoveryServer {
                   request.getVersionInfo(),
                   request.getResourceNamesList());
 
-              Flux.from(newWatch.value()).subscribe(r -> nonces.put(type, send(r, type.typeUrl())));
+              Flux.from(newWatch.value())
+                  .doAfterTerminate(() -> responseObserver.onError(
+                      Status.UNAVAILABLE
+                          .withDescription(String.format("%s watch failed", type.toString()))
+                          .asException()))
+                  .subscribe(r -> nonces.put(type, send(r, type.typeUrl())));
 
               return newWatch;
             });

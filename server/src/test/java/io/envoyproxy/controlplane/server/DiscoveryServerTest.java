@@ -1,8 +1,10 @@
 package io.envoyproxy.controlplane.server;
 
+import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.fail;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.LinkedListMultimap;
@@ -28,6 +30,7 @@ import io.envoyproxy.controlplane.cache.ConfigWatcher;
 import io.envoyproxy.controlplane.cache.ResourceType;
 import io.envoyproxy.controlplane.cache.Response;
 import io.envoyproxy.controlplane.cache.Watch;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.grpc.testing.GrpcServerRule;
 import java.util.Collection;
@@ -38,6 +41,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.assertj.core.api.Condition;
 import org.junit.Rule;
 import org.junit.Test;
@@ -65,7 +69,7 @@ public class DiscoveryServerTest {
   private static final RouteConfiguration ROUTE = Resources.createRoute(ROUTE_NAME, CLUSTER_NAME);
 
   @Rule
-  public final GrpcServerRule grpcServer = new GrpcServerRule();
+  public final GrpcServerRule grpcServer = new GrpcServerRule().directExecutor();
 
   @Test
   public void testAggregatedHandler() throws InterruptedException {
@@ -75,27 +79,10 @@ public class DiscoveryServerTest {
     grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
 
     AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
-    CountDownLatch completedLatch = new CountDownLatch(1);
-    AtomicBoolean error = new AtomicBoolean();
-    Collection<DiscoveryResponse> responses = new LinkedList<>();
 
-    StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(
-        new StreamObserver<DiscoveryResponse>() {
-          @Override
-          public void onNext(DiscoveryResponse value) {
-            responses.add(value);
-          }
+    MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
 
-          @Override
-          public void onError(Throwable t) {
-            error.set(true);
-          }
-
-          @Override
-          public void onCompleted() {
-            completedLatch.countDown();
-          }
-        });
+    StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
 
     requestObserver.onNext(DiscoveryRequest.newBuilder()
         .setNode(NODE)
@@ -121,9 +108,11 @@ public class DiscoveryServerTest {
 
     requestObserver.onCompleted();
 
-    if (!completedLatch.await(1, TimeUnit.SECONDS) || error.get()) {
-      fail(String.format("failed to complete request before timeout, error = %b", error.get()));
+    if (!responseObserver.completedLatch.await(1, TimeUnit.SECONDS) || responseObserver.error.get()) {
+      fail(format("failed to complete request before timeout, error = %b", responseObserver.error.get()));
     }
+
+    responseObserver.assertThatNoErrors();
 
     for (ResourceType type : ResourceType.values()) {
       assertThat(configWatcher.counts).containsEntry(type, 1);
@@ -132,7 +121,7 @@ public class DiscoveryServerTest {
     assertThat(configWatcher.counts).hasSize(ResourceType.values().length);
 
     for (ResourceType type : ResourceType.values()) {
-      assertThat(responses).haveAtLeastOne(new Condition<>(
+      assertThat(responseObserver.responses).haveAtLeastOne(new Condition<>(
           r -> r.getTypeUrl().equals(type.typeUrl()) && r.getVersionInfo().equals(VERSION),
           "missing expected response of type %s", type));
     }
@@ -154,26 +143,7 @@ public class DiscoveryServerTest {
     RouteDiscoveryServiceStub    routeStub    = RouteDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
 
     for (ResourceType type : ResourceType.values()) {
-      CountDownLatch completedLatch = new CountDownLatch(1);
-      AtomicBoolean error = new AtomicBoolean();
-      Collection<DiscoveryResponse> responses = new LinkedList<>();
-
-      StreamObserver<DiscoveryResponse> responseObserver = new StreamObserver<DiscoveryResponse>() {
-        @Override
-        public void onNext(DiscoveryResponse value) {
-          responses.add(value);
-        }
-
-        @Override
-        public void onError(Throwable t) {
-          error.set(true);
-        }
-
-        @Override
-        public void onCompleted() {
-          completedLatch.countDown();
-        }
-      };
+      MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
 
       StreamObserver<DiscoveryRequest> requestObserver = null;
       DiscoveryRequest.Builder discoveryRequestBuilder = DiscoveryRequest.newBuilder()
@@ -202,17 +172,81 @@ public class DiscoveryServerTest {
       requestObserver.onNext(discoveryRequestBuilder.build());
       requestObserver.onCompleted();
 
-      if (!completedLatch.await(1, TimeUnit.SECONDS) || error.get()) {
-        fail(String.format("failed to complete request before timeout, error = %b", error.get()));
+      if (!responseObserver.completedLatch.await(1, TimeUnit.SECONDS) || responseObserver.error.get()) {
+        fail(format("failed to complete request before timeout, error = %b", responseObserver.error.get()));
       }
 
+      responseObserver.assertThatNoErrors();
+
       assertThat(configWatcher.counts).containsEntry(type, 1);
-      assertThat(responses).haveAtLeastOne(new Condition<>(
+      assertThat(responseObserver.responses).haveAtLeastOne(new Condition<>(
           r -> r.getTypeUrl().equals(type.typeUrl()) && r.getVersionInfo().equals(VERSION),
           "missing expected response of type %s", type));
     }
 
     assertThat(configWatcher.counts).hasSize(ResourceType.values().length);
+  }
+
+  @Test
+  public void testWatchClosed() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(true, ImmutableMultimap.of());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
+
+    AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    for (ResourceType type : ResourceType.values()) {
+
+      MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
+
+      StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
+
+      requestObserver.onNext(DiscoveryRequest.newBuilder()
+          .setNode(NODE)
+          .setTypeUrl(type.typeUrl())
+          .build());
+
+      requestObserver.onError(new RuntimeException("send error"));
+
+      if (!responseObserver.errorLatch.await(1, TimeUnit.SECONDS)
+          || responseObserver.completed.get()
+          || !responseObserver.responses.isEmpty()) {
+        fail(format("failed to error before timeout, completed = %b, responses.count = %d",
+            responseObserver.completed.get(),
+            responseObserver.responses.size()));
+      }
+
+      responseObserver.assertThatNoErrors();
+    }
+  }
+
+  @Test
+  public void testSendError() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
+
+    AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    for (ResourceType type : ResourceType.values()) {
+      MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
+      responseObserver.sendError = true;
+
+      StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
+
+      requestObserver.onNext(DiscoveryRequest.newBuilder()
+          .setNode(NODE)
+          .setTypeUrl(type.typeUrl())
+          .build());
+
+      if (!responseObserver.errorLatch.await(1, TimeUnit.SECONDS) || responseObserver.completed.get()) {
+        fail(format("failed to error before timeout, completed = %b", responseObserver.completed.get()));
+      }
+
+      responseObserver.assertThatNoErrors();
+    }
   }
 
   private static Multimap<ResourceType, Response> createResponses() {
@@ -253,6 +287,75 @@ public class DiscoveryServerTest {
       }
 
       return watch;
+    }
+  }
+
+  private static class MockDiscoveryResponseObserver implements StreamObserver<DiscoveryResponse> {
+
+    private final Collection<String> assertionErrors = new LinkedList<>();
+    private final AtomicBoolean completed = new AtomicBoolean();
+    private final CountDownLatch completedLatch = new CountDownLatch(1);
+    private final AtomicBoolean error = new AtomicBoolean();
+    private final CountDownLatch errorLatch = new CountDownLatch(1);
+    private final AtomicInteger nonce = new AtomicInteger();
+    private final Collection<DiscoveryResponse> responses = new LinkedList<>();
+
+    private boolean sendError = false;
+
+    void assertThatNoErrors() {
+      if (!assertionErrors.isEmpty()) {
+        throw new AssertionError(String.join(", ", assertionErrors));
+      }
+    }
+
+    @Override
+    public void onNext(DiscoveryResponse value) {
+      // Assert that the nonce is monotonically increasing.
+      String nonce = Integer.toString(this.nonce.getAndIncrement());
+
+      if (!nonce.equals(value.getNonce())) {
+        assertionErrors.add(String.format("Nonce => got %s, wanted %s", value.getNonce(), nonce));
+      }
+
+      // Assert that the version is set.
+      if (Strings.isNullOrEmpty(value.getVersionInfo())) {
+        assertionErrors.add("VersionInfo => got none, wanted non-empty");
+      }
+
+      // Assert that resources are non-empty.
+      if (value.getResourcesList().isEmpty()) {
+        assertionErrors.add("Resources => got none, wanted non-empty");
+      }
+
+      if (Strings.isNullOrEmpty(value.getTypeUrl())) {
+        assertionErrors.add("TypeUrl => got none, wanted non-empty");
+      }
+
+      value.getResourcesList().forEach(r -> {
+        if (!value.getTypeUrl().equals(r.getTypeUrl())) {
+          assertionErrors.add(String.format("TypeUrl => got %s, wanted %s", r.getTypeUrl(), value.getTypeUrl()));
+        }
+      });
+
+      responses.add(value);
+
+      if (sendError) {
+        throw Status.INTERNAL
+            .withDescription("send error")
+            .asRuntimeException();
+      }
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      error.set(true);
+      errorLatch.countDown();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed.set(true);
+      completedLatch.countDown();
     }
   }
 }
