@@ -305,7 +305,7 @@ public class DiscoveryServerTest {
   }
 
   @Test
-  public void testAggregateRequestType() throws InterruptedException {
+  public void testAggregateHandlerDefaultRequestType() throws InterruptedException {
     MockConfigWatcher configWatcher = new MockConfigWatcher(true, ImmutableMultimap.of());
     DiscoveryServer server = new DiscoveryServer(configWatcher);
 
@@ -317,14 +317,67 @@ public class DiscoveryServerTest {
 
     StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
 
+    // Leave off the type URL. For ADS requests it should fail because the type URL is required.
     requestObserver.onNext(
         DiscoveryRequest.newBuilder()
             .setNode(NODE)
             .build());
 
-    // Assert that we've received an error. The request is expected to fail because a type URL is required.
     if (!responseObserver.errorLatch.await(1, TimeUnit.SECONDS) || responseObserver.completed.get()) {
       fail(format("failed to error before timeout, completed = %b", responseObserver.completed.get()));
+    }
+  }
+
+  @Test
+  public void testSeparateHandlersDefaultRequestType() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getClusterDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getEndpointDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getListenerDiscoveryServiceImpl());
+    grpcServer.getServiceRegistry().addService(server.getRouteDiscoveryServiceImpl());
+
+    ClusterDiscoveryServiceStub  clusterStub  = ClusterDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    EndpointDiscoveryServiceStub endpointStub = EndpointDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    ListenerDiscoveryServiceStub listenerStub = ListenerDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+    RouteDiscoveryServiceStub    routeStub    = RouteDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    for (ResourceType type : ResourceType.values()) {
+      MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
+
+      StreamObserver<DiscoveryRequest> requestObserver = null;
+
+      switch (type) {
+        case CLUSTER:
+          requestObserver = clusterStub.streamClusters(responseObserver);
+          break;
+        case ENDPOINT:
+          requestObserver = endpointStub.streamEndpoints(responseObserver);
+          break;
+        case LISTENER:
+          requestObserver = listenerStub.streamListeners(responseObserver);
+          break;
+        case ROUTE:
+          requestObserver = routeStub.streamRoutes(responseObserver);
+          break;
+        default:
+          fail("Unsupported resource type: " + type.toString());
+      }
+
+      // Leave off the type URL. For xDS requests it should default to the value for that handler's type.
+      DiscoveryRequest discoveryRequest = DiscoveryRequest.newBuilder()
+          .setNode(NODE)
+          .build();
+
+      requestObserver.onNext(discoveryRequest);
+      requestObserver.onCompleted();
+
+      if (!responseObserver.completedLatch.await(1, TimeUnit.SECONDS) || responseObserver.error.get()) {
+        fail(format("failed to complete request before timeout, error = %b", responseObserver.error.get()));
+      }
+
+      responseObserver.assertThatNoErrors();
     }
   }
 
