@@ -10,10 +10,12 @@ import "gogoproto/gogo.proto";
 option (gogoproto.equal_all) = true;
 
 // [#protodoc-title: Network addresses]
-// [#v2-api-diff: Addresses now have .proto structure.]
 
 message Pipe {
-  // Unix Domain Socket path.
+  // Unix Domain Socket path. On Linux, paths starting with '@' will use the
+  // abstract namespace. The starting '@' is replaced by a null byte by Envoy.
+  // Paths starting with '@' will result in an error in environments other than
+  // Linux.
   string path = 1 [(validate.rules).string.min_bytes = 1];
 }
 

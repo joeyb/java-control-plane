@@ -14,8 +14,7 @@ import "gogoproto/gogo.proto";
 
 option (gogoproto.equal_all) = true;
 
-// [#protodoc-title: HTTP route management]
-
+// [#protodoc-title: HTTP route]
 // * Routing :ref:`architecture overview <arch_overview_http_routing>`
 // * HTTP :ref:`router filter <config_http_filters_router>`
 
@@ -564,7 +563,7 @@ message RedirectAction {
   // code is MOVED_PERMANENTLY (301).
   RedirectResponseCode response_code = 3 [(validate.rules).enum.defined_only = true];
 
-  // [#not-implemented-hide:] The scheme portion of the URL will be swapped with "https".
+  // The scheme portion of the URL will be swapped with "https".
   bool https_redirect = 4;
 }
 
