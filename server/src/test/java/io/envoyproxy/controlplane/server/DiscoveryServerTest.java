@@ -42,6 +42,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.assertj.core.api.Condition;
 import org.junit.Rule;
 import org.junit.Test;
@@ -246,6 +247,60 @@ public class DiscoveryServerTest {
       }
 
       responseObserver.assertThatNoErrors();
+    }
+  }
+
+  @Test
+  public void testStaleNonce() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
+
+    AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    for (ResourceType type : ResourceType.values()) {
+      AtomicReference<StreamObserver<DiscoveryRequest>> requestObserver = new AtomicReference<>();
+
+      MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver() {
+        @Override
+        public void onNext(DiscoveryResponse value) {
+          super.onNext(value);
+
+          // Stale request, should not create a new watch.
+          requestObserver.get().onNext(
+              DiscoveryRequest.newBuilder()
+                  .setNode(NODE)
+                  .setTypeUrl(type.typeUrl())
+                  .setResponseNonce("xyz")
+                  .build());
+
+          // Fresh request, should create a new watch.
+          requestObserver.get().onNext(
+              DiscoveryRequest.newBuilder()
+                  .setNode(NODE)
+                  .setTypeUrl(type.typeUrl())
+                  .setResponseNonce("0")
+                  .setVersionInfo("0")
+                  .build());
+
+          requestObserver.get().onCompleted();
+        }
+      };
+
+      requestObserver.set(stub.streamAggregatedResources(responseObserver));
+
+      requestObserver.get().onNext(DiscoveryRequest.newBuilder()
+          .setNode(NODE)
+          .setTypeUrl(type.typeUrl())
+          .build());
+
+      if (!responseObserver.completedLatch.await(1, TimeUnit.SECONDS) || responseObserver.error.get()) {
+        fail(format("failed to complete request before timeout, error = %b", responseObserver.error.get()));
+      }
+
+      // Assert that 2 watches have been created for this resource type.
+      assertThat(configWatcher.counts.get(type)).isEqualTo(2);
     }
   }
 
