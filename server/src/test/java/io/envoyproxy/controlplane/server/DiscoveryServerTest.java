@@ -304,6 +304,30 @@ public class DiscoveryServerTest {
     }
   }
 
+  @Test
+  public void testAggregateRequestType() throws InterruptedException {
+    MockConfigWatcher configWatcher = new MockConfigWatcher(true, ImmutableMultimap.of());
+    DiscoveryServer server = new DiscoveryServer(configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
+
+    AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
+
+    StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
+
+    requestObserver.onNext(
+        DiscoveryRequest.newBuilder()
+            .setNode(NODE)
+            .build());
+
+    // Assert that we've received an error. The request is expected to fail because a type URL is required.
+    if (!responseObserver.errorLatch.await(1, TimeUnit.SECONDS) || responseObserver.completed.get()) {
+      fail(format("failed to error before timeout, completed = %b", responseObserver.completed.get()));
+    }
+  }
+
   private static Multimap<ResourceType, Response> createResponses() {
     return ImmutableMultimap.<ResourceType, Response>builder()
         .put(ResourceType.CLUSTER, Response.create(false, ImmutableList.of(CLUSTER), VERSION))
